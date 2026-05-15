@@ -1,5 +1,5 @@
 """
-bot.py — BingX Futures Telegram Bot
+bot.py — BingX Futures Telegram Bot (tiếng Việt toàn bộ)
 """
 
 import json
@@ -51,7 +51,7 @@ PID_FILE      = BASE_DIR / "bot.pid"
 TELEGRAM_API  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 
-# ── Single-instance lock ──────────────────────────────────────────────────────
+# ── Chống chạy nhiều instance ─────────────────────────────────────────────────
 _instance_socket = None
 
 def _acquire_instance_lock(port: int = 47832) -> bool:
@@ -87,7 +87,7 @@ def _remove_pid():
 _scan_lock = threading.Lock()
 
 
-# ── Cooldown ──────────────────────────────────────────────────────────────────
+# ── Quản lý cooldown ─────────────────────────────────────────────────────────
 def load_notified() -> dict:
     if NOTIFIED_FILE.exists():
         try:
@@ -108,7 +108,7 @@ def mark_notified(notified, symbol, timeframe):
     notified[f"{symbol}_{timeframe}"] = time.time()
 
 
-# ── Telegram ──────────────────────────────────────────────────────────────────
+# ── Gửi tin nhắn Telegram ────────────────────────────────────────────────────
 def send_message(text: str, reply_markup: dict = None, chat_id: str = None):
     payload = {
         "chat_id":    chat_id or TELEGRAM_CHAT_ID,
@@ -149,7 +149,7 @@ def answer_callback(callback_query_id: str):
         pass
 
 
-# ── Keyboards ─────────────────────────────────────────────────────────────────
+# ── Bàn phím inline ──────────────────────────────────────────────────────────
 MAIN_KEYBOARD = {
     "inline_keyboard": [
         [
@@ -172,7 +172,7 @@ BACK_KEYBOARD = {
 }
 
 def build_alerts_keyboard() -> dict:
-    """Tạo keyboard hiển thị danh sách alerts + nút xóa từng cái."""
+    """Tạo bàn phím hiển thị danh sách alert kèm nút xóa từng cái."""
     alerts = alert_mod._load()
     rows = []
 
@@ -196,7 +196,7 @@ def tv_link(base: str) -> str:
     return f"https://www.tradingview.com/chart/?symbol=BINGX:{base}USDT.P"
 
 
-# ── Pump & Dump ───────────────────────────────────────────────────────────────
+# ── Quét Pump & Dump ─────────────────────────────────────────────────────────
 def get_pump_alerts() -> list:
     notified = load_notified()
     alerts   = run_full_scan()
@@ -208,15 +208,19 @@ def format_pump_message(alerts: list) -> str:
     now = datetime.now(timezone.utc).strftime("%H:%M UTC")
     if not alerts:
         return f"🔍 Không có tín hiệu bất thường lúc {now}."
-    lines = [f"⚡ <b>PUMP &amp; DUMP BẤT THƯỜNG</b>  |  {now}\n"]
+    lines = [f"⚡ <b>PUMP &amp; DUMP ĐỘT NGỘT</b>  |  {now}\n"]
     for i, a in enumerate(alerts, 1):
         base  = a["symbol"].replace("-USDT", "").replace("_USDT", "")
         emoji = "🚀" if a["direction"] == "pump" else "💥"
         sign  = "+" if a["percent_change"] > 0 else ""
+        # Volume spike chỉ hiển thị nếu có
+        vol_str = ""
+        if a.get("vol_spike") is not None:
+            vol_str = f"  vol {'+' if a['vol_spike'] >= 0 else ''}{a['vol_spike']:.0f}%"
         lines.append(
             f"{i}. {emoji} <a href='{tv_link(base)}'><b>{base}</b></a>"
             f"  {sign}{a['percent_change']:.1f}%  [{a['timeframe']}]"
-            f"  vol+{a['vol_spike']:.0f}%"
+            f"{vol_str}"
         )
     return "\n".join(lines)
 
@@ -230,7 +234,7 @@ def run_pump_scan(update_cooldown=True) -> str:
     return format_pump_message(alerts)
 
 
-# ── Top 10 Gainers ────────────────────────────────────────────────────────────
+# ── Top 10 tăng mạnh nhất ────────────────────────────────────────────────────
 def get_top10_gainers() -> list:
     url = f"{BINGX_BASE_URL}/openApi/swap/v2/quote/ticker"
     try:
@@ -270,9 +274,9 @@ def format_top10_message(coins: list) -> str:
     return "\n".join(lines)
 
 
-# ── Correction Signal (RSI + H4 pump) ────────────────────────────────────────
+# ── Tín hiệu điều chỉnh (RSI + H4 pump) ─────────────────────────────────────
 def run_correction_check() -> str:
-    """Quét correction signal trên top 10 gainers 24h."""
+    """Quét tín hiệu điều chỉnh trên top 10 coin tăng mạnh 24h."""
     coins = get_top10_gainers()
     symbols = [c["symbol"] for c in coins]
     if not symbols:
@@ -285,9 +289,9 @@ def run_correction_check() -> str:
     return "\n\n──────────────\n\n".join(msgs)
 
 
-# ── Auto scan scheduler ───────────────────────────────────────────────────────
+# ── Lịch quét tự động ────────────────────────────────────────────────────────
 def process_auto_scan():
-    # Scan pump & dump thông thường
+    # Quét pump & dump thông thường
     alerts = get_pump_alerts()
     if alerts:
         send_message(format_pump_message(alerts), reply_markup=MAIN_KEYBOARD)
@@ -295,11 +299,11 @@ def process_auto_scan():
         for a in alerts:
             mark_notified(notified, a["symbol"], a["timeframe"])
         save_notified(notified)
-        logger.info(f"Auto scan: gửi {len(alerts)} pump/dump alert")
+        logger.info(f"Quét tự động: gửi {len(alerts)} tín hiệu pump/dump")
     else:
-        logger.info("Auto scan: không có tín hiệu pump/dump mới")
+        logger.info("Quét tự động: không có tín hiệu pump/dump mới")
 
-    # Scan correction signal — quét top 10 gainers 24h
+    # Quét tín hiệu điều chỉnh — top 10 coin tăng mạnh 24h
     try:
         coins = get_top10_gainers()
         symbols = [c["symbol"] for c in coins]
@@ -312,22 +316,22 @@ def process_auto_scan():
                     send_message(format_correction_message(sig), reply_markup=MAIN_KEYBOARD)
                     mark_notified(notified, key, "correction")
                     save_notified(notified)
-                    logger.info(f"Correction signal gửi: {sig['symbol']}")
+                    logger.info(f"Đã gửi tín hiệu điều chỉnh: {sig['symbol']}")
     except Exception as e:
         logger.error(f"Lỗi correction scan: {e}", exc_info=True)
 
 def scheduler_loop():
-    logger.info(f"Scheduler — nghỉ {SCAN_INTERVAL_SECONDS}s sau mỗi lần scan")
+    logger.info(f"Lịch quét — nghỉ {SCAN_INTERVAL_SECONDS}s sau mỗi lần quét")
     while True:
         with _scan_lock:
             try:
                 process_auto_scan()
             except Exception as e:
-                logger.error(f"Lỗi scheduler: {e}", exc_info=True)
+                logger.error(f"Lỗi lịch quét: {e}", exc_info=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
-# ── Telegram update listener ──────────────────────────────────────────────────
+# ── Nhận cập nhật từ Telegram ────────────────────────────────────────────────
 def get_updates(offset: int = 0) -> list:
     try:
         resp = requests.get(
@@ -342,7 +346,7 @@ def get_updates(offset: int = 0) -> list:
 
 def handle_updates():
     offset = 0
-    logger.info("Update listener bắt đầu")
+    logger.info("Bắt đầu lắng nghe cập nhật Telegram")
     while True:
         for update in get_updates(offset):
             offset = update["update_id"] + 1
@@ -440,7 +444,7 @@ def handle_updates():
                     )
 
                 elif data == "noop":
-                    pass  # nút label alert, không làm gì
+                    pass  # nút nhãn alert, không thực hiện gì
 
             elif "message" in update:
                 msg     = update["message"]
@@ -506,7 +510,7 @@ def handle_updates():
                         send_message(f"🔄 Đang lấy RSI của <b>{coin}</b>...", reply_markup=MAIN_KEYBOARD)
                         def do_rsi(c=coin):
                             from rsi_scanner import _check_multi_rsi, _check_h4_pump, RSI_OVERBOUGHT
-                            # Thử các format symbol
+                            # Thử các định dạng symbol
                             for sym in [f"{c}-USDT", f"{c}_USDT", c]:
                                 is_pump, pump_pct, price, h4_high = _check_h4_pump(sym)
                                 red_count, details = _check_multi_rsi(sym)
@@ -556,9 +560,9 @@ def handle_updates():
                     )
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Khởi động ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Trên cloud (Railway) bỏ qua single-instance lock vì chỉ có 1 container
+    # Trên cloud (Railway) bỏ qua kiểm tra instance vì chỉ có 1 container
     is_cloud = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PORT")
     if not is_cloud:
         if not _acquire_instance_lock():
