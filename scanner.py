@@ -1,8 +1,9 @@
 """
-scanner.py — Scan pump & dump thông minh:
-  Bước 1: Lấy toàn bộ ticker 1 lần → lọc coin biến động mạnh
-  Bước 2: Chỉ fetch kline của coin đã lọc (~20-30 coin)
-  → Nhanh hơn 20x, không lag máy
+scanner.py — Scan pump đột ngột theo nến vừa đóng:
+  - Lấy toàn bộ ticker 1 lần → lọc coin biến động ≥10% trong 24h
+  - Lấy nến H1/H4 vừa đóng của từng coin
+  - Nếu nến đó pump/dump ≥ THRESHOLD_PERCENT → báo signal
+  - Volume chỉ hiển thị thêm, không dùng để lọc
 """
 
 import time
@@ -22,44 +23,43 @@ from config import (
 logger = logging.getLogger(__name__)
 
 MIN_PRICE    = 0.000001
-MAX_PCT_CAP  = 5000.0
-KLINE_LIMIT  = 11
+MAX_PCT_CAP  = 2000.0
 MAX_WORKERS  = 20
-PRE_FILTER   = 5.0   # % thay đổi 24h tối thiểu để đưa vào danh sách kline
+PRE_FILTER   = 10.0   # % thay đổi 24h tối thiểu để lọc vào danh sách scan
 
 
-# ── Bước 1: Lấy toàn bộ ticker 1 lần, lọc nhanh ─────────────────────────────
+# ── Bước 1: Lấy toàn bộ ticker, lọc coin biến động ≥10% trong 24h ────────────
 def get_filtered_symbols() -> list:
-    """Lấy all tickers, trả về list symbol có biến động 24h đáng kể."""
     url = f"{BINGX_BASE_URL}/openApi/swap/v2/quote/ticker"
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         candidates = []
+        total = 0
         for t in resp.json().get("data", []):
             try:
-                sym    = t.get("symbol", "")
-                price  = float(t.get("lastPrice", 0))
-                open_  = float(t.get("openPrice", 0))
+                sym   = t.get("symbol", "")
+                price = float(t.get("lastPrice", 0))
+                open_ = float(t.get("openPrice", 0))
                 if not sym or price < MIN_PRICE or open_ < MIN_PRICE:
                     continue
+                total += 1
                 pct = abs((price - open_) / open_) * 100
                 if pct >= PRE_FILTER and pct <= MAX_PCT_CAP:
                     candidates.append((sym, round(pct, 2)))
             except Exception:
                 continue
-        # Sắp xếp theo % giảm dần, giữ top 60 coin biến động nhất
         candidates.sort(key=lambda x: x[1], reverse=True)
-        symbols = [s for s, _ in candidates[:60]]
-        logger.info(f"Pre-filter: {len(symbols)} coin biến động ≥{PRE_FILTER}% / tổng {len(resp.json().get('data', []))}")
+        symbols = [s for s, _ in candidates[:80]]
+        logger.info(f"Pre-filter: {len(symbols)} coin biến động ≥{PRE_FILTER}% / tổng {total}")
         return symbols
     except Exception as e:
         logger.error(f"Lỗi lấy ticker: {e}")
         return []
 
 
-# ── Bước 2: Fetch kline cho từng coin đã lọc ─────────────────────────────────
-def get_klines(symbol: str, interval: str, limit: int = KLINE_LIMIT):
+# ── Bước 2: Lấy nến vừa đóng của từng coin ───────────────────────────────────
+def get_klines(symbol: str, interval: str, limit: int = 3):
     url = f"{BINGX_BASE_URL}/openApi/swap/v3/quote/klines"
     try:
         resp = requests.get(
@@ -76,42 +76,54 @@ def get_klines(symbol: str, interval: str, limit: int = KLINE_LIMIT):
 def analyze_symbol(symbol: str) -> list:
     alerts = []
     for tf in TIMEFRAMES:
-        klines = get_klines(symbol, tf, KLINE_LIMIT)
+        # Lấy 3 nến: [-3]=cũ, [-2]=vừa đóng, [-1]=đang chạy
+        klines = get_klines(symbol, tf, limit=12)
         if not klines or len(klines) < 3:
             continue
         try:
-            current     = klines[-1]
-            open_price  = float(current["open"])
-            close_price = float(current["close"])
-            current_vol = float(current["volume"])
+            # Nến vừa đóng là klines[-2]
+            candle      = klines[-2]
+            open_price  = float(candle["open"])
+            close_price = float(candle["close"])
+            high_price  = float(candle["high"])
+            low_price   = float(candle["low"])
+            volume      = float(candle["volume"])
 
             if open_price < MIN_PRICE or close_price < MIN_PRICE:
                 continue
 
-            past_vols = [float(k["volume"]) for k in klines[:-1] if float(k["volume"]) > 0]
-            if not past_vols:
-                continue
-            avg_vol = sum(past_vols) / len(past_vols)
-            if avg_vol <= 0:
-                continue
-
-            pct       = ((close_price - open_price) / open_price) * 100
-            vol_spike = ((current_vol - avg_vol) / avg_vol) * 100
+            pct = ((close_price - open_price) / open_price) * 100
 
             if abs(pct) > MAX_PCT_CAP:
                 continue
 
-            if abs(pct) >= THRESHOLD_PERCENT and vol_spike >= VOLUME_SPIKE_PERCENT:
-                alerts.append({
-                    "symbol":         symbol,
-                    "timeframe":      tf,
-                    "percent_change": round(pct, 2),
-                    "vol_spike":      round(vol_spike, 1),
-                    "current_price":  close_price,
-                    "open_price":     open_price,
-                    "direction":      "pump" if pct > 0 else "dump",
-                    "scanned_at":     datetime.now(timezone.utc),
-                })
+            # Điều kiện chính: pump/dump ≥ ngưỡng trong 1 nến vừa đóng
+            if abs(pct) < THRESHOLD_PERCENT:
+                continue
+
+            # Tính volume spike để hiển thị thêm
+            vol_spike = None
+            try:
+                past_vols = [float(k["volume"]) for k in klines[:-2] if float(k["volume"]) > 0]
+                if past_vols:
+                    avg_vol = sum(past_vols) / len(past_vols)
+                    if avg_vol > 0:
+                        vol_spike = round(((volume - avg_vol) / avg_vol) * 100, 1)
+            except Exception:
+                pass
+
+            alerts.append({
+                "symbol":         symbol,
+                "timeframe":      tf,
+                "percent_change": round(pct, 2),
+                "vol_spike":      vol_spike,
+                "current_price":  close_price,
+                "open_price":     open_price,
+                "high_price":     high_price,
+                "low_price":      low_price,
+                "direction":      "pump" if pct > 0 else "dump",
+                "scanned_at":     datetime.now(timezone.utc),
+            })
         except Exception:
             continue
     return alerts
@@ -120,7 +132,7 @@ def analyze_symbol(symbol: str) -> list:
 # ── Full scan ─────────────────────────────────────────────────────────────────
 def run_full_scan() -> list:
     t0 = time.time()
-    logger.info("=== Scan bắt đầu ===")
+    logger.info("=== Pump scan bắt đầu ===")
 
     symbols = get_filtered_symbols()
     if not symbols:
