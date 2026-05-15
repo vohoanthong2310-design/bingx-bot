@@ -20,7 +20,7 @@ VOLUME_SPIKE_PERCENT = 50.0
 
 # Cooldown mỗi coin/khung (giây) — 1 tiếng tránh spam
 ALERT_COOLDOWN_SECONDS = 1 * 60 * 60
-
+SCAN_INTERVAL_SECONDS = 1800
 # Top N coin mỗi lần scan
 MAX_ALERTS_PER_SCAN = 10
 
