@@ -6,22 +6,19 @@ TELEGRAM_TOKEN   = "8662908189:AAGhEZ1WeUf65A_-kWgmf-oSKrG4aNsDMLk"
 TELEGRAM_CHAT_ID = "-5283990846"
 
 # ============================================================
-#  CÀI ĐẶT SCAN
+#  CÀI ĐẶT SCAN PUMP & DUMP
 # ============================================================
 
-# Ngưỡng % thay đổi để gửi alert (pump hoặc dump)
-THRESHOLD_PERCENT = 20.0
+# Ngưỡng % pump/dump trong 1 nến để gửi alert
+THRESHOLD_PERCENT = 50.0
 
-# Các khung thời gian scan (M1 → H4)
-TIMEFRAMES = ["15m", "1h", "4h"]
+# Khung thời gian scan nến vừa đóng
+TIMEFRAMES = ["1h", "4h"]
 
-# Ngưỡng volume đột biến so với trung bình
+# Volume spike — chỉ hiển thị thêm, không dùng để lọc
 VOLUME_SPIKE_PERCENT = 50.0
 
-# Tần suất scan (giây) — mặc định 2 phút (do có M1/M5)
-SCAN_INTERVAL_SECONDS = 1800
-
-# Cooldown mỗi coin (giây) — 1 tiếng
+# Cooldown mỗi coin/khung (giây) — 1 tiếng tránh spam
 ALERT_COOLDOWN_SECONDS = 1 * 60 * 60
 
 # Top N coin mỗi lần scan
